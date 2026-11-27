@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#080b12">
+<title>UltraZoom Camera</title>
+<style>
+:root{color-scheme:dark;--gold:#e8bd68;--panel:#121824;--muted:#9ba7b8}
+*{box-sizing:border-box}body{margin:0;background:#080b12;color:#f5f7fb;font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.app{max-width:600px;margin:auto;min-height:100dvh;display:flex;flex-direction:column;padding:16px;gap:14px}
+header{display:flex;justify-content:space-between;align-items:center}.brand{font-weight:800;letter-spacing:.12em}.brand span{color:var(--gold)}.status{font-size:12px;color:var(--muted)}
+.view{position:relative;background:#000;border-radius:22px;overflow:hidden;aspect-ratio:3/4;display:grid;place-items:center;border:1px solid #263244}
+video{width:100%;height:100%;object-fit:cover;transform-origin:center;display:none}.placeholder{color:#9ba7b8;text-align:center;padding:24px;line-height:1.6}.gridlines{position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,transparent 33.1%,#ffffff24 33.3%,transparent 33.6%,transparent 66.4%,#ffffff24 66.6%,transparent 66.9%),linear-gradient(0deg,transparent 33.1%,#ffffff24 33.3%,transparent 33.6%,transparent 66.4%,#ffffff24 66.6%,transparent 66.9%);display:none}
+.zoomread{position:absolute;top:14px;left:14px;background:#0009;padding:8px 12px;border-radius:20px;font-weight:700;color:var(--gold)}
+.controls{background:var(--panel);border:1px solid #263244;border-radius:18px;padding:15px;display:grid;gap:13px}
+.zoomtop{display:flex;justify-content:space-between;align-items:center}.zoomtop strong{font-size:26px;color:var(--gold)}input[type=range]{width:100%;accent-color:var(--gold)}
+.presets{display:flex;justify-content:space-between;gap:7px}.presets button,.action{border:1px solid #344257;background:#1a2433;color:#f5f7fb;border-radius:12px;padding:10px 12px;font-weight:650}.presets button.active{background:var(--gold);color:#111;border-color:var(--gold)}
+.actions{display:flex;justify-content:center;align-items:center;gap:22px;padding:4px}.shutter{width:72px;height:72px;border-radius:50%;background:#fff;border:6px solid #9ba7b8;box-shadow:0 0 0 4px #ffffff24}.small{font-size:12px;color:var(--muted);text-align:center}.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1}
+#gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}#gallery img{width:100%;border-radius:9px}
+.note{font-size:12px;line-height:1.5;color:var(--muted)}button:disabled{opacity:.45}
+</style>
+</head>
+<body>
+<div class="app">
+<header><div class="brand">ULTRA<span>ZOOM</span></div><div class="status" id="status">CAMERA OFF</div></header>
+<div class="view" id="view">
+  <div class="placeholder" id="placeholder">Tap <b>Start Camera</b> and allow camera access.<br>Use the rear camera for best results.</div>
+  <video id="video" playsinline autoplay muted></video><div class="gridlines" id="grid"></div><div class="zoomread" id="zoomread">1.0×</div>
+</div>
+<div class="controls">
+  <div class="zoomtop"><span>ZOOM LEVEL</span><strong id="zoomlabel">1.0×</strong></div>
+  <input id="zoom" type="range" min="1" max="50" value="1" step="0.1" disabled>
+  <div class="presets">
+    <button data-z="1" class="active">1×</button><button data-z="2">2×</button><button data-z="5">5×</button><button data-z="10">10×</button><button data-z="20">20×</button><button data-z="50">50×</button>
+  </div>
+  <div class="row"><button class="action" id="start">Start Camera</button><button class="action" id="switch" disabled>Switch Camera</button><button class="action" id="gridbtn">Grid: Off</button></div>
+</div>
+<div class="actions"><div class="small">PHOTO</div><button class="shutter" id="shot" aria-label="Take photo" disabled></button><div class="small">SAVE JPG</div></div>
+<div class="note">Stability aid: keep the phone braced with both hands. This page applies a small motion-sensor counter-movement when supported; it cannot fully remove hand shake. High zoom is a digital crop, so fine detail and image quality decrease as magnification increases.</div>
+<div id="gallery"></div>
+</div>
+<script>
+const video=document.querySelector('#video'), zoom=document.querySelector('#zoom'), label=document.querySelector('#zoomlabel'), read=document.querySelector('#zoomread');
+const start=document.querySelector('#start'), shot=document.querySelector('#shot'), statusEl=document.querySelector('#status');
+let stream=null, facing='environment', zoomValue=1, track=null, nativeMax=1, gridOn=false, orientationGranted=false;
+let lastX=0,lastY=0, sensorX=0,sensorY=0;
+function setZoom(z){zoomValue=Math.max(1,Math.min(50,Number(z)));zoom.value=zoomValue;label.textContent=zoomValue.toFixed(1)+'×';read.textContent=zoomValue.toFixed(1)+'×';document.querySelectorAll('[data-z]').forEach(b=>b.classList.toggle('active',Number(b.dataset.z)===Math.round(zoomValue)));applyZoom()}
+async function applyZoom(){
+ if(!video.videoWidth)return;
+ // Prefer native camera zoom when exposed; fill the remainder with a digital crop.
+ let native=1;
+ if(track && track.applyConstraints && nativeMax>1){native=Math.min(zoomValue,nativeMax);try{await track.applyConstraints({advanced:[{zoom:native}]})}catch(e){}}
+ const digital=Math.max(1,zoomValue/native);
+ video.style.transform=`scale(${Math.min(5,digital)}) translate(${lastX}px,${lastY}px)`;
+}
+async function startCamera(){
+ try{
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:facing},width:{ideal:3840},height:{ideal:2160}}});
+  video.srcObject=stream;await video.play();track=stream.getVideoTracks()[0];
+  const caps=track.getCapabilities?track.getCapabilities():{};nativeMax=caps.zoom?.max||1;
+  zoom.disabled=false;shot.disabled=false;document.querySelector('#switch').disabled=false;
+  document.querySelector('#placeholder').style.display='none';video.style.display='block';document.querySelector('#grid').style.display=gridOn?'block':'none';
+  statusEl.textContent='CAMERA READY';start.textContent='Restart Camera';setZoom(1);
+  if(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission==='function'){
+    try{const p=await DeviceOrientationEvent.requestPermission();orientationGranted=p==='granted'}catch(e){}
+  } else orientationGranted=true;
+  if(orientationGranted)window.addEventListener('deviceorientation',onOrientation);
+ }catch(e){statusEl.textContent='CAMERA ERROR';document.querySelector('#placeholder').style.display='block';document.querySelector('#placeholder').textContent='Camera could not start. Open this page in Safari, allow camera access, and use HTTPS. ('+e.message+')'}
+}
+function onOrientation(e){
+ if(e.gamma==null||e.beta==null)return;
+ // Gentle, bounded counter-motion. This reduces framing drift, not true optical shake.
+ sensorX+=(Math.max(-1,Math.min(1,-e.gamma/35))-sensorX)*.12;
+ sensorY+=(Math.max(-1,Math.min(1,-(e.beta-45)/35))-sensorY)*.12;
+ lastX=sensorX*2.5;lastY=sensorY*2.5;
+ video.style.transform=`scale(${Math.min(5,zoomValue/Math.max(1,Math.min(zoomValue,nativeMax)))}) translate(${lastX}px,${lastY}px)`;
+}
+start.addEventListener('click',startCamera);
+document.querySelector('#switch').addEventListener('click',()=>{facing=facing==='environment'?'user':'environment';startCamera()});
+zoom.addEventListener('input',()=>setZoom(zoom.value));
+document.querySelectorAll('[data-z]').forEach(b=>b.addEventListener('click',()=>setZoom(b.dataset.z)));
+document.querySelector('#gridbtn').addEventListener('click',()=>{gridOn=!gridOn;document.querySelector('#grid').style.display=gridOn?'block':'none';document.querySelector('#gridbtn').textContent='Grid: '+(gridOn?'On':'Off')});
+shot.addEventListener('click',()=>{
+ if(!video.videoWidth)return;
+ const vw=video.videoWidth,vh=video.videoHeight;
+ const native=Math.max(1,Math.min(zoomValue,nativeMax)), digital=zoomValue/native;
+ const cropW=vw/digital,cropH=vh/digital;
+ const sx=(vw-cropW)/2,sy=(vh-cropH)/2;
+ const canvas=document.createElement('canvas');canvas.width=Math.round(cropW);canvas.height=Math.round(cropH);
+ const ctx=canvas.getContext('2d');ctx.drawImage(video,sx,sy,cropW,cropH,0,0,canvas.width,canvas.height);
+ canvas.toBlob(blob=>{
+  if(!blob)return;const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='UltraZoom-'+Date.now()+'.jpg';a.click();
+  const img=document.createElement('img');img.src=url;document.querySelector('#gallery').prepend(img);
+ },'image/jpeg',.96);
+});
+</script>
+</body>
+</html>
