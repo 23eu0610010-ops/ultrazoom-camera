@@ -12,7 +12,21 @@
 .app{max-width:600px;margin:auto;min-height:100dvh;display:flex;flex-direction:column;padding:16px;gap:14px}
 header{display:flex;justify-content:space-between;align-items:center}.brand{font-weight:800;letter-spacing:.12em}.brand span{color:var(--gold)}.status{font-size:12px;color:var(--muted)}
 .view{position:relative;background:#000;border-radius:22px;overflow:hidden;aspect-ratio:3/4;display:grid;place-items:center;border:1px solid #263244}
-video{width:100%;height:100%;object-fit:cover;transform-origin:center;display:none}.placeholder{color:#9ba7b8;text-align:center;padding:24px;line-height:1.6}.gridlines{position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,transparent 33.1%,#ffffff24 33.3%,transparent 33.6%,transparent 66.4%,#ffffff24 66.6%,transparent 66.9%),linear-gradient(0deg,transparent 33.1%,#ffffff24 33.3%,transparent 33.6%,transparent 66.4%,#ffffff24 66.6%,transparent 66.9%);display:none}
+video{width:100%;height:100%;object-fit:cover;transform-origin:center;display:none;will-change:transform}
+body.camera-on{overflow:hidden}
+body.camera-on .app{max-width:none;min-height:100dvh;height:100dvh;padding:0;gap:0}
+body.camera-on header{position:fixed;z-index:5;top:0;left:0;right:0;padding:14px 18px;background:linear-gradient(#000b,transparent)}
+body.camera-on .view{position:fixed;z-index:1;inset:0;width:100vw;height:100dvh;max-height:none;aspect-ratio:auto;border:0;border-radius:0}
+body.camera-on video{object-fit:contain}
+body.camera-on .controls{position:fixed;z-index:6;left:12px;right:12px;bottom:calc(104px + env(safe-area-inset-bottom));padding:12px;background:#101722dc;backdrop-filter:blur(14px);border-radius:16px;gap:9px}
+body.camera-on .controls .presets{overflow-x:auto;justify-content:flex-start}
+body.camera-on .controls .presets button{flex:0 0 auto;padding:9px 11px}
+body.camera-on .actions{position:fixed;z-index:7;left:0;right:0;bottom:calc(12px + env(safe-area-inset-bottom));padding:8px 18px;background:linear-gradient(transparent,#0009)}
+body.camera-on .note,body.camera-on #gallery{display:none}
+body.camera-on .zoomtop strong{font-size:22px}
+body.camera-on input[type=range]{height:30px;cursor:pointer;touch-action:pan-y}
+@media (max-height:650px){body.camera-on .controls{bottom:calc(88px + env(safe-area-inset-bottom));padding:8px;gap:6px}body.camera-on .controls .presets button{padding:6px 9px}}
+.placeholder{color:#9ba7b8;text-align:center;padding:24px;line-height:1.6}.gridlines{position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,transparent 33.1%,#ffffff24 33.3%,transparent 33.6%,transparent 66.4%,#ffffff24 66.6%,transparent 66.9%),linear-gradient(0deg,transparent 33.1%,#ffffff24 33.3%,transparent 33.6%,transparent 66.4%,#ffffff24 66.6%,transparent 66.9%);display:none}
 .zoomread{position:absolute;top:14px;left:14px;background:#0009;padding:8px 12px;border-radius:20px;font-weight:700;color:var(--gold)}
 .controls{background:var(--panel);border:1px solid #263244;border-radius:18px;padding:15px;display:grid;gap:13px}
 .zoomtop{display:flex;justify-content:space-between;align-items:center}.zoomtop strong{font-size:26px;color:var(--gold)}input[type=range]{width:100%;accent-color:var(--gold)}
@@ -31,7 +45,7 @@ video{width:100%;height:100%;object-fit:cover;transform-origin:center;display:no
 </div>
 <div class="controls">
   <div class="zoomtop"><span>ZOOM LEVEL</span><strong id="zoomlabel">1.0×</strong></div>
-  <input id="zoom" type="range" min="1" max="200" value="1" step="0.1" disabled>
+  <input id="zoom" type="range" min="1" max="200" value="1" step="0.01" disabled>
   <div class="presets">
     <button data-z="1" class="active">1×</button><button data-z="2">2×</button><button data-z="5">5×</button><button data-z="10">10×</button><button data-z="20">20×</button><button data-z="50">50×</button><button data-z="100">100×</button><button data-z="150">150×</button><button data-z="200">200×</button>
   </div>
@@ -45,15 +59,35 @@ video{width:100%;height:100%;object-fit:cover;transform-origin:center;display:no
 const video=document.querySelector('#video'), zoom=document.querySelector('#zoom'), label=document.querySelector('#zoomlabel'), read=document.querySelector('#zoomread');
 const start=document.querySelector('#start'), shot=document.querySelector('#shot'), statusEl=document.querySelector('#status');
 let stream=null, facing='environment', zoomValue=1, track=null, nativeMax=1, gridOn=false, orientationGranted=false;
-let lastX=0,lastY=0, sensorX=0,sensorY=0;
-function setZoom(z){zoomValue=Math.max(1,Math.min(200,Number(z)));zoom.value=zoomValue;label.textContent=zoomValue.toFixed(1)+'×';read.textContent=zoomValue.toFixed(1)+'×';document.querySelectorAll('[data-z]').forEach(b=>b.classList.toggle('active',Number(b.dataset.z)===Math.round(zoomValue)));applyZoom()}
-async function applyZoom(){
+let lastX=0,lastY=0,sensorX=0,sensorY=0, renderQueued=false, nativeZoomTimer=null, appliedNativeZoom=1;
+function renderZoom(){
  if(!video.videoWidth)return;
- // Prefer native camera zoom when exposed; fill the remainder with a digital crop.
- let native=1;
- if(track && track.applyConstraints && nativeMax>1){native=Math.min(zoomValue,nativeMax);try{await track.applyConstraints({advanced:[{zoom:native}]})}catch(e){}}
- const digital=Math.max(1,zoomValue/native);
- video.style.transform=`scale(${digital}) translate(${lastX}px,${lastY}px)`;
+ const digital=Math.max(1,zoomValue/Math.max(1,appliedNativeZoom));
+ video.style.transform=`translate3d(${lastX}px,${lastY}px,0) scale(${digital})`;
+}
+function queueZoomRender(){
+ if(renderQueued)return;
+ renderQueued=true;
+ requestAnimationFrame(()=>{renderQueued=false;renderZoom()});
+}
+function setZoom(z){
+ zoomValue=Math.max(1,Math.min(200,Number(z)));
+ zoom.value=zoomValue;
+ label.textContent=zoomValue.toFixed(1)+'×';
+ read.textContent=zoomValue.toFixed(1)+'×';
+ document.querySelectorAll('[data-z]').forEach(b=>b.classList.toggle('active',Number(b.dataset.z)===Math.round(zoomValue)));
+ queueZoomRender();
+ // Apply hardware zoom after the finger pauses, avoiding a stream of competing camera requests.
+ if(nativeZoomTimer)clearTimeout(nativeZoomTimer);
+ nativeZoomTimer=setTimeout(async()=>{
+  if(!track||!track.applyConstraints||nativeMax<=1)return;
+  const target=Math.min(zoomValue,nativeMax);
+  try{
+   await track.applyConstraints({advanced:[{zoom:target}]});
+   appliedNativeZoom=target;
+   queueZoomRender();
+  }catch(e){}
+ },130);
 }
 async function startCamera(){
  try{
@@ -68,7 +102,7 @@ async function startCamera(){
     try{const p=await DeviceOrientationEvent.requestPermission();orientationGranted=p==='granted'}catch(e){}
   } else orientationGranted=true;
   if(orientationGranted)window.addEventListener('deviceorientation',onOrientation);
- }catch(e){statusEl.textContent='CAMERA ERROR';document.querySelector('#placeholder').style.display='block';document.querySelector('#placeholder').textContent='Camera could not start. Open this page in Safari, allow camera access, and use HTTPS. ('+e.message+')'}
+ }catch(e){document.body.classList.remove('camera-on');statusEl.textContent='CAMERA ERROR';document.querySelector('#placeholder').style.display='block';document.querySelector('#placeholder').textContent='Camera could not start. Open this page in Safari, allow camera access, and use HTTPS. ('+e.message+')'}
 }
 function onOrientation(e){
  if(e.gamma==null||e.beta==null)return;
