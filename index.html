@@ -31,9 +31,9 @@ video{width:100%;height:100%;object-fit:cover;transform-origin:center;display:no
 </div>
 <div class="controls">
   <div class="zoomtop"><span>ZOOM LEVEL</span><strong id="zoomlabel">1.0×</strong></div>
-  <input id="zoom" type="range" min="1" max="50" value="1" step="0.1" disabled>
+  <input id="zoom" type="range" min="1" max="200" value="1" step="0.1" disabled>
   <div class="presets">
-    <button data-z="1" class="active">1×</button><button data-z="2">2×</button><button data-z="5">5×</button><button data-z="10">10×</button><button data-z="20">20×</button><button data-z="50">50×</button>
+    <button data-z="1" class="active">1×</button><button data-z="2">2×</button><button data-z="5">5×</button><button data-z="10">10×</button><button data-z="20">20×</button><button data-z="50">50×</button><button data-z="100">100×</button><button data-z="150">150×</button><button data-z="200">200×</button>
   </div>
   <div class="row"><button class="action" id="start">Start Camera</button><button class="action" id="switch" disabled>Switch Camera</button><button class="action" id="gridbtn">Grid: Off</button></div>
 </div>
@@ -46,14 +46,14 @@ const video=document.querySelector('#video'), zoom=document.querySelector('#zoom
 const start=document.querySelector('#start'), shot=document.querySelector('#shot'), statusEl=document.querySelector('#status');
 let stream=null, facing='environment', zoomValue=1, track=null, nativeMax=1, gridOn=false, orientationGranted=false;
 let lastX=0,lastY=0, sensorX=0,sensorY=0;
-function setZoom(z){zoomValue=Math.max(1,Math.min(50,Number(z)));zoom.value=zoomValue;label.textContent=zoomValue.toFixed(1)+'×';read.textContent=zoomValue.toFixed(1)+'×';document.querySelectorAll('[data-z]').forEach(b=>b.classList.toggle('active',Number(b.dataset.z)===Math.round(zoomValue)));applyZoom()}
+function setZoom(z){zoomValue=Math.max(1,Math.min(200,Number(z)));zoom.value=zoomValue;label.textContent=zoomValue.toFixed(1)+'×';read.textContent=zoomValue.toFixed(1)+'×';document.querySelectorAll('[data-z]').forEach(b=>b.classList.toggle('active',Number(b.dataset.z)===Math.round(zoomValue)));applyZoom()}
 async function applyZoom(){
  if(!video.videoWidth)return;
  // Prefer native camera zoom when exposed; fill the remainder with a digital crop.
  let native=1;
  if(track && track.applyConstraints && nativeMax>1){native=Math.min(zoomValue,nativeMax);try{await track.applyConstraints({advanced:[{zoom:native}]})}catch(e){}}
  const digital=Math.max(1,zoomValue/native);
- video.style.transform=`scale(${Math.min(5,digital)}) translate(${lastX}px,${lastY}px)`;
+ video.style.transform=`scale(${digital}) translate(${lastX}px,${lastY}px)`;
 }
 async function startCamera(){
  try{
@@ -76,7 +76,7 @@ function onOrientation(e){
  sensorX+=(Math.max(-1,Math.min(1,-e.gamma/35))-sensorX)*.12;
  sensorY+=(Math.max(-1,Math.min(1,-(e.beta-45)/35))-sensorY)*.12;
  lastX=sensorX*2.5;lastY=sensorY*2.5;
- video.style.transform=`scale(${Math.min(5,zoomValue/Math.max(1,Math.min(zoomValue,nativeMax)))}) translate(${lastX}px,${lastY}px)`;
+ video.style.transform=`scale(${(zoomValue/Math.max(1,Math.min(zoomValue,nativeMax)))}) translate(${lastX}px,${lastY}px)`;
 }
 start.addEventListener('click',startCamera);
 document.querySelector('#switch').addEventListener('click',()=>{facing=facing==='environment'?'user':'environment';startCamera()});
@@ -89,8 +89,8 @@ shot.addEventListener('click',()=>{
  const native=Math.max(1,Math.min(zoomValue,nativeMax)), digital=zoomValue/native;
  const cropW=vw/digital,cropH=vh/digital;
  const sx=(vw-cropW)/2,sy=(vh-cropH)/2;
- const canvas=document.createElement('canvas');canvas.width=Math.round(cropW);canvas.height=Math.round(cropH);
- const ctx=canvas.getContext('2d');ctx.drawImage(video,sx,sy,cropW,cropH,0,0,canvas.width,canvas.height);
+ const canvas=document.createElement('canvas');canvas.width=vw;canvas.height=vh;
+ const ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(video,sx,sy,cropW,cropH,0,0,canvas.width,canvas.height);
  canvas.toBlob(blob=>{
   if(!blob)return;const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='UltraZoom-'+Date.now()+'.jpg';a.click();
   const img=document.createElement('img');img.src=url;document.querySelector('#gallery').prepend(img);
